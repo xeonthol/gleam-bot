@@ -1,0 +1,12 @@
+{
+  "name": "gleam-bot-kucoin",
+  "version": "1.0.0",
+  "description": "Bot untuk Gleam KuCoin Giveaway",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0"
+  }
+}
