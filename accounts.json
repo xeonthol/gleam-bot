@@ -1,0 +1,14 @@
+[
+  {
+    "email": "account1@gmail.com",
+    "twitter_username": "@user1",
+    "kucoin_uid": "123456789",
+    "repost_link": "https://x.com/user1/status/1234567890"
+  },
+  {
+    "email": "account2@gmail.com",
+    "twitter_username": "@user2",
+    "kucoin_uid": "987654321",
+    "repost_link": "https://x.com/user2/status/9876543210"
+  }
+]
