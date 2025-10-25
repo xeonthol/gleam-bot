@@ -1,12 +1,28 @@
 {
-  "name": "gleam-bot-kucoin",
+  "name": "gleam-bot",
   "version": "1.0.0",
-  "description": "Bot untuk Gleam KuCoin Giveaway",
-  "main": "main.js",
+  "description": "Automated bot for Gleam.io campaigns",
+  "main": "index.js",
   "scripts": {
-    "start": "node main.js"
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test": "node test.js"
   },
+  "keywords": [
+    "gleam",
+    "automation",
+    "bot",
+    "giveaway"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "puppeteer": "^21.0.0"
+    "puppeteer": "^21.6.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.2",
+    "2captcha": "^3.0.6",
+    "proxy-chain": "^2.4.0"
   }
 }
