@@ -170,6 +170,11 @@ function saveFailedAccounts(failedAccounts) {
   }
 }
 
+// Get nested value (e.g. "twitter.username" -> account.twitter.username)
+function getNestedValue(obj, path) {
+  return path.split('.').reduce((acc, key) => (acc && acc[key] !== undefined ? acc[key] : null), obj);
+}
+
 module.exports = {
   sleep,
   randomDelay,
@@ -183,5 +188,6 @@ module.exports = {
   getElementText,
   loadAccounts,
   saveFailedAccounts,
+  getNestedValue,
   colors
 };
