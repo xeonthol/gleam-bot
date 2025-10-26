@@ -186,18 +186,32 @@ async function completeSubmitTask(page, taskIndex, taskType, userData) {
     }
     
     let submitData = '';
-    
-    if (taskType.includes('email') || taskType.includes('Email')) {
-      submitData = userData.email;
-    } else if (taskType.includes('wallet') || taskType.includes('address')) {
-      submitData = userData.wallet;
-    } else if (taskType.includes('telegram') || taskType.includes('Telegram')) {
-      submitData = userData.telegram?.username || '@username';
-    } else if (taskType.includes('twitter') || taskType.includes('Twitter')) {
-      submitData = userData.twitter?.username || '@username';
-    } else {
-      submitData = userData.email;
-    }
+
+if (taskType.includes('email') || taskType.includes('Email')) {
+  submitData = userData.email;
+  utils.log(`📧 Submitting email: ${submitData}`, 'info');
+} else if (taskType.includes('wallet') || taskType.includes('address')) {
+  submitData = userData.wallet;
+  utils.log(`💰 Submitting wallet: ${submitData}`, 'info');
+} else if (taskType.includes('telegram') || taskType.includes('Telegram')) {
+  submitData = userData.telegram?.username || '@username';
+  utils.log(`📱 Submitting Telegram: ${submitData}`, 'info');
+} else if (taskType.includes('twitter') || taskType.includes('Twitter') && !taskType.includes('link') && !taskType.includes('repost')) {
+  submitData = userData.twitter?.username || '@username';
+  utils.log(`🐦 Submitting Twitter: ${submitData}`, 'info');
+} else if (taskType.includes('kucoin') || taskType.includes('KuCoin') || taskType.includes('UID') || taskType.includes('uid')) {
+  // ✅ TAMBAHAN BARU: Support KuCoin UID
+  submitData = userData.kucoin_uid || '123456789';
+  utils.log(`🪙 Submitting KuCoin UID: ${submitData}`, 'info');
+} else if (taskType.includes('repost') || taskType.includes('link') || taskType.includes('tweet link') || taskType.includes('post link')) {
+  // ✅ TAMBAHAN BARU: Support Repost Link
+  submitData = userData.repost_link || 'https://twitter.com/status/123';
+  utils.log(`🔗 Submitting repost link: ${submitData}`, 'info');
+} else {
+  // Default: pakai email
+  submitData = userData.email;
+  utils.log(`📝 Submitting default data: ${submitData}`, 'info');
+}
     
     await utils.safeType(page, inputSelector, submitData, { clear: true, delay: 100 });
     await utils.sleep(500);
