@@ -135,7 +135,15 @@ async function processAllTasks(page, methods, account) {
     if (m.title.toLowerCase().includes('submit') || m.title.toLowerCase().includes('enter')) {
       await completeSubmitTask(page, m.index, m.title, account);
       await utils.randomDelay(2000, 4000);
-    } else {
+    } 
+    
+    else if (m.title.toLowerCase().includes('twitter') && m.title.toLowerCase().includes('follow')) {
+      utils.log(`🐦 Detected Twitter Follow task: ${m.title}`, 'info');
+      await twitterOAuth.completeTwitterFollowTask(page, m.index, account.twitter);
+      await utils.randomDelay(3000, 6000);
+}
+
+    else {
       utils.log(`⏭️ Skip non-submit task: ${m.title}`, 'warning');
     }
   }
