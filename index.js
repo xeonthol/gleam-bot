@@ -136,7 +136,11 @@ async function analyzeEntryMethods(page) {
       return methods.map((method, index) => {
         const actionType = method.getAttribute('data-action') || 
                           method.getAttribute('data-entry-method') || 'unknown';
-        const title = method.querySelector('.entry-title, .entry-name, .entry-description')?.textContent.trim() || 'No title';
+        const title =
+          method.querySelector(
+            '.entry-title, .entry-name, .entry-description, .task-title, .widget-action-title, .entry-text, .action-title'
+          )?.textContent.trim() || 'No title';
+
         const isCompleted = method.classList.contains('completed') || method.classList.contains('entered');
         
         return { index, action: actionType, title, completed: isCompleted };
