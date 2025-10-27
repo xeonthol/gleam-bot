@@ -2,35 +2,49 @@
   {
     "id": 1,
     "name": "Account 1",
-    "email": "user1@gmail.com",
-    "wallet": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
     "twitter": {
       "username": "user1_twitter",
       "password": "password123",
-      "email": "user1@gmail.com"
+      "email": "user1@example.com"
+    },
+    "discord": {
+      "email": "user1@example.com",
+      "password": "password123"
     },
     "telegram": {
       "username": "@user1_telegram"
     },
+    "wallet": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
+    "email": "user1@example.com",
     "kucoin_uid": "123456789",
-    "repost_link": "https://twitter.com/user1/status/1234567890",
+    "retweet_config": {
+      "quoteText": "Trade $LIGHT on #KuCoin! 🚀",
+      "taggedFriends": ["friend1", "friend2", "friend3"]
+    },
     "proxy": ""
   },
   {
     "id": 2,
     "name": "Account 2",
-    "email": "user2@gmail.com",
-    "wallet": "0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7",
     "twitter": {
       "username": "user2_twitter",
       "password": "password456",
-      "email": "user2@gmail.com"
+      "email": "user2@example.com"
+    },
+    "discord": {
+      "email": "user2@example.com",
+      "password": "password456"
     },
     "telegram": {
       "username": "@user2_telegram"
     },
+    "wallet": "0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7",
+    "email": "user2@example.com",
     "kucoin_uid": "987654321",
-    "repost_link": "https://twitter.com/user2/status/9876543210",
+    "retweet_config": {
+      "quoteText": "Amazing giveaway! Don't miss out! 💎",
+      "taggedFriends": ["friendA", "friendB", "friendC"]
+    },
     "proxy": ""
   }
 ]
