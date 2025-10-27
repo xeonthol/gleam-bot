@@ -1,9 +1,12 @@
-// Gleam Bot - Clean + Auto-Mapping Version
+// Gleam Bot - Phase 5: Multi-Account + Twitter OAuth
+// Supports unlimited accounts with proxy rotation + Auto Twitter Follow
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const dotenv = require('dotenv');
 const utils = require('./utils');
+const twitterOAuth = require('./twitter-oauth');
+const twitterActions = require('./twitter-actions');
 
 puppeteer.use(StealthPlugin());
 dotenv.config();
@@ -14,312 +17,455 @@ const config = {
   actionDelay: parseInt(process.env.ACTION_DELAY) || 2000,
   maxRetries: parseInt(process.env.MAX_RETRIES) || 3,
   pageTimeout: parseInt(process.env.PAGE_TIMEOUT) || 30000,
-  accountDelay: parseInt(process.env.ACCOUNT_DELAY) || 10000,
-  saveScreenshots: process.env.SAVE_SCREENSHOTS === 'true'
+  accountDelay: parseInt(process.env.ACCOUNT_DELAY) || 5000,
+  stealthMode: process.env.STEALTH_MODE === 'true',
+  saveScreenshots: process.env.SAVE_SCREENSHOTS === 'true',
+  debug: process.env.DEBUG === 'true'
 };
 
 function validateConfig() {
-  if (!config.gleamUrl) {
-    utils.log('❌ GLEAM_URL tidak ditemukan di .env!', 'error');
+  if (!config.gleamUrl || config.gleamUrl === 'https://gleam.io/xxxxx/your-campaign') {
+    utils.log('❌ GLEAM_URL tidak valid! Edit .env file.', 'error');
     process.exit(1);
   }
   utils.log('✅ Config validated', 'success');
 }
 
 async function setupBrowser(proxyServer = null) {
-  const args = [
+  utils.log('🚀 Launching browser...', 'process');
+  
+  const browserArgs = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
-    '--disable-blink-features=AutomationControlled'
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--disable-gpu'
   ];
-
+  
+  // Add proxy if provided
   if (proxyServer) {
-    args.push(`--proxy-server=${proxyServer}`);
+    browserArgs.push(`--proxy-server=${proxyServer}`);
     utils.log(`🔒 Using proxy: ${proxyServer}`, 'info');
   }
-
+  
   const browser = await puppeteer.launch({
     headless: config.headless,
-    args,
+    args: browserArgs,
     defaultViewport: { width: 1366, height: 768 }
   });
-
+  
+  utils.log('✅ Browser launched', 'success');
   return browser;
 }
 
 async function setupPage(browser) {
   const page = await browser.newPage();
-  await page.setUserAgent(utils.getRandomUserAgent());
+  const userAgent = utils.getRandomUserAgent();
+  await page.setUserAgent(userAgent);
+  
+  if (config.debug) {
+    utils.log(`🎭 User Agent: ${userAgent.substring(0, 50)}...`, 'info');
+  }
+  
+  await page.setExtraHTTPHeaders({
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+  });
+  
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    window.chrome = { runtime: {} };
+    
+    const originalQuery = window.navigator.permissions.query;
+    window.navigator.permissions.query = (parameters) => (
+      parameters.name === 'notifications' ?
+        Promise.resolve({ state: Notification.permission }) :
+        originalQuery(parameters)
+    );
+  });
+  
   page.setDefaultTimeout(config.pageTimeout);
   page.setDefaultNavigationTimeout(config.pageTimeout);
   
-  // Anti-detection: Override webdriver
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-  });
-  
+  utils.log('✅ Page configured with anti-detection', 'success');
   return page;
 }
 
 async function navigateToGleam(page) {
   utils.log(`🌐 Navigating to Gleam...`, 'process');
+  
   try {
-    await page.goto(config.gleamUrl, { 
+    await page.goto(config.gleamUrl, {
       waitUntil: 'networkidle2',
       timeout: config.pageTimeout
     });
-    await utils.waitForElement(page, 'div.entry-method', config.pageTimeout);
-    await utils.sleep(2000);
-    utils.log('✅ Gleam page loaded', 'success');
-    return true;
-  } catch (e) {
-    utils.log(`❌ Failed to load Gleam: ${e.message}`, 'error');
+    
+    utils.log('✅ Page loaded', 'success');
+    
+    const widgetLoaded = await utils.waitForElement(
+      page, 
+      '.entry-method, .gleam-widget, [class*="gleam"]',
+      config.pageTimeout,
+      3
+    );
+    
+    if (widgetLoaded) {
+      utils.log('✅ Gleam widget loaded', 'success');
+      return true;
+    } else {
+      utils.log('❌ Gleam widget not found', 'error');
+      return false;
+    }
+    
+  } catch (error) {
+    utils.log(`❌ Navigation error: ${error.message}`, 'error');
     return false;
   }
 }
 
 async function analyzeEntryMethods(page) {
+  utils.log('🔍 Analyzing entry methods...', 'process');
+  
   try {
-    const methods = await page.$$eval('div.entry-method', els =>
-      els.map((el, i) => ({
-        index: i,
-        title: el.textContent.trim().substring(0, 100),
-        completed: el.classList.contains('completed-entry-method') || 
-                   el.classList.contains('done') ||
-                   el.querySelector('.done') !== null,
-        id: el.id || null
-      }))
-    );
-    
-    utils.log(`📋 Found ${methods.length} tasks`, 'info');
-    methods.forEach((m, i) => {
-      const status = m.completed ? '✅' : '❌';
-      utils.log(`  ${i+1}. ${status} ${m.title}`, 'info');
+    const entryMethods = await page.$$eval('.entry-method', methods => {
+      return methods.map((method, index) => {
+        const actionType = method.getAttribute('data-action') || 
+                          method.getAttribute('data-entry-method') || 'unknown';
+        const title = method.querySelector('.entry-title, .entry-name, .entry-description')?.textContent.trim() || 'No title';
+        const isCompleted = method.classList.contains('completed') || method.classList.contains('entered');
+        
+        return { index, action: actionType, title, completed: isCompleted };
+      });
     });
     
-    return methods;
-  } catch (e) {
-    utils.log(`❌ Failed to analyze tasks: ${e.message}`, 'error');
+    utils.log(`📋 Found ${entryMethods.length} entry methods`, 'info');
+    return entryMethods;
+    
+  } catch (error) {
+    utils.log(`❌ Error analyzing: ${error.message}`, 'error');
     return [];
   }
 }
 
-async function completeSubmitTask(page, taskIndex, title, account) {
-  utils.log(`📝 Processing submit task: ${title}`, 'info');
-  
-  // Klik task menggunakan evaluate (lebih reliable)
-  const clicked = await page.evaluate((idx) => {
-    const tasks = document.querySelectorAll('div.entry-method');
-    const task = tasks[idx];
-    if (task && !task.classList.contains('completed-entry-method')) {
-      const link = task.querySelector('a.enter-link');
-      if (link) {
-        link.click();
-        return true;
-      }
-    }
-    return false;
-  }, taskIndex);
-  
-  if (!clicked) {
-    utils.log(`⚠️ Task already done or not clickable`, 'warning');
-    return false;
-  }
-  
-  await utils.sleep(2000);
-
-  // Mapping keywords
-  const mappings = {
-    wallet: 'wallet',
-    address: 'wallet',
-    email: 'email',
-    telegram: 'telegram.username',
-    twitter: 'twitter.username',
-    repost: 'repost_link',
-    uid: 'kucoin_uid',
-    kucid: 'kucoin_uid'
-  };
-
-  let key = Object.keys(mappings).find(k => 
-    title.toLowerCase().includes(k)
-  ) || 'email';
-  
-  const value = utils.getNestedValue(account, mappings[key]);
-
-  if (!value) {
-    utils.log(`⚠️ No data found for "${key}" in account`, 'warning');
-    return false;
-  }
-
-  // Cari input field yang muncul
-  const inputSelector = 'textarea[name="data"], input[type="text"], input[type="url"], input[type="email"], textarea';
+async function completeSubmitTask(page, taskIndex, taskType, userData) {
+  utils.log(`📝 Completing task #${taskIndex + 1}: ${taskType}`, 'process');
   
   try {
-    await page.waitForSelector(inputSelector, { timeout: 5000 });
+    const entryMethodSelector = `.entry-method:nth-of-type(${taskIndex + 1})`;
+    await utils.safeClick(page, entryMethodSelector);
+    await utils.sleep(1000);
     
-    // Clear & type
-    await page.evaluate((sel) => {
-      const input = document.querySelector(sel);
-      if (input) input.value = '';
-    }, inputSelector);
+    const inputSelectors = [
+      'input[type="text"]',
+      'input[type="email"]',
+      'input[name*="email"]',
+      'input[name*="wallet"]',
+      'input[name*="address"]',
+      'input[placeholder*="Enter"]',
+      '.form-control',
+      '.input-field'
+    ];
     
-    await page.type(inputSelector, value, { delay: 50 });
+    let inputFound = false;
+    let inputSelector = null;
+    
+    for (const selector of inputSelectors) {
+      const exists = await utils.elementExists(page, selector);
+      if (exists) {
+        inputSelector = selector;
+        inputFound = true;
+        break;
+      }
+    }
+    
+    if (!inputFound) {
+      utils.log(`⚠️ No input field found`, 'warning');
+      return { success: false, reason: 'no_input_field' };
+    }
+    
+    let submitData = '';
+    
+    if (taskType.includes('email') || taskType.includes('Email')) {
+      submitData = userData.email;
+    } else if (taskType.includes('wallet') || taskType.includes('address')) {
+      submitData = userData.wallet;
+    } else if (taskType.includes('telegram') || taskType.includes('Telegram')) {
+      submitData = userData.telegram?.username || '@username';
+    } else if (taskType.includes('twitter') || taskType.includes('Twitter') && !taskType.includes('link') && !taskType.includes('repost')) {
+      submitData = userData.twitter?.username || '@username';
+    } else if (taskType.includes('kucoin') || taskType.includes('KuCoin') || taskType.includes('UID') || taskType.includes('uid')) {
+      // ✅ Support KuCoin UID
+      submitData = userData.kucoin_uid || '123456789';
+      utils.log(`🪙 Submitting KuCoin UID: ${submitData}`, 'info');
+    } else if (taskType.includes('repost') || taskType.includes('link') || taskType.includes('tweet link') || taskType.includes('post link')) {
+      // ✅ Support Repost Link
+      submitData = userData.repost_link || 'https://twitter.com/status/123';
+      utils.log(`🔗 Submitting repost link: ${submitData}`, 'info');
+    } else {
+      submitData = userData.email;
+    }
+    
+    await utils.safeType(page, inputSelector, submitData, { clear: true, delay: 100 });
     await utils.sleep(500);
     
-    // Klik button Continue/Submit
-    const buttonClicked = await page.evaluate(() => {
-      const buttons = document.querySelectorAll('.form-actions .btn-primary, button.btn-primary, a.btn-primary');
-      const btn = Array.from(buttons).find(b => 
-        b.textContent.includes('Continue') || 
-        b.textContent.includes('Submit')
-      );
-      if (btn) {
-        btn.click();
-        return true;
-      }
-      return false;
-    });
+    const submitButtonSelectors = [
+      'button[type="submit"]',
+      'button:has-text("Submit")',
+      'button:has-text("Continue")',
+      '.submit-button',
+      '.btn-primary'
+    ];
     
-    if (buttonClicked) {
-      await utils.randomDelay(2000, 3000);
-      utils.log(`✅ Submitted ${key}: ${value}`, 'success');
-      return true;
-    } else {
-      utils.log(`⚠️ Continue button not found`, 'warning');
-      return false;
+    let submitClicked = false;
+    
+    for (const selector of submitButtonSelectors) {
+      try {
+        const buttonExists = await page.$(selector);
+        if (buttonExists) {
+          await page.click(selector);
+          submitClicked = true;
+          break;
+        }
+      } catch (error) {
+        continue;
+      }
     }
     
-  } catch (e) {
-    utils.log(`❌ Input field not found: ${e.message}`, 'error');
-    return false;
+    if (!submitClicked) {
+      await page.keyboard.press('Enter');
+    }
+    
+    await utils.sleep(2000);
+    
+    const taskCompleted = await page.$eval(
+      entryMethodSelector,
+      el => el.classList.contains('completed') || el.classList.contains('entered')
+    ).catch(() => false);
+    
+    if (taskCompleted) {
+      utils.log(`✅ Task #${taskIndex + 1} completed!`, 'success');
+      return { success: true, data: submitData };
+    } else {
+      utils.log(`⚠️ Task #${taskIndex + 1} status uncertain`, 'warning');
+      return { success: true, data: submitData, uncertain: true };
+    }
+    
+  } catch (error) {
+    utils.log(`❌ Error task #${taskIndex + 1}: ${error.message}`, 'error');
+    return { success: false, error: error.message };
   }
 }
 
-async function processAllTasks(page, methods, account) {
-  let completedCount = 0;
+async function processAllTasks(page, entryMethods, userData) {
+  const results = [];
   
-  for (const m of methods) {
-    if (m.completed) {
-      utils.log(`⏭️  Skip (already done): ${m.title}`, 'info');
+  for (const method of entryMethods) {
+    if (method.completed) {
+      utils.log(`⏭️ Skip task #${method.index + 1} - already done`, 'info');
+      results.push({ taskIndex: method.index, skipped: true, reason: 'already_completed' });
       continue;
     }
-
-    const titleLower = m.title.toLowerCase();
     
-    // Deteksi task submit
-    if (titleLower.includes('submit') || titleLower.includes('enter') || 
-        titleLower.includes('your') && (titleLower.includes('email') || 
-        titleLower.includes('wallet') || titleLower.includes('uid'))) {
+    // Check if it's a Submit task
+    const isSubmitTask = 
+      method.action.includes('email') ||
+      method.action.includes('wallet') ||
+      method.action.includes('address') ||
+      method.title.toLowerCase().includes('submit') ||
+      method.title.toLowerCase().includes('enter your');
+    
+    // Check if it's a Twitter Follow task
+    const isTwitterFollowTask = 
+      method.action === 'twitter_follow' ||
+      method.action.includes('follow') && method.title.toLowerCase().includes('twitter') ||
+      method.title.toLowerCase().includes('follow') && (method.title.toLowerCase().includes('@') || method.title.toLowerCase().includes('twitter'));
+    
+    if (isTwitterFollowTask) {
+      // ✅ NEW: Twitter Follow with OAuth
+      utils.log(`🐦 Detected TWITTER FOLLOW task: ${method.title}`, 'info');
       
-      const success = await completeSubmitTask(page, m.index, m.title, account);
-      if (success) completedCount++;
+      if (userData.twitter && userData.twitter.password) {
+        const result = await twitterOAuth.completeTwitterFollowTask(
+          page, 
+          method.index, 
+          userData.twitter
+        );
+        results.push({ taskIndex: method.index, ...result });
+        await utils.randomDelay(3000, 5000);
+      } else {
+        utils.log(`⚠️ No Twitter credentials for this account - skipping`, 'warning');
+        results.push({ taskIndex: method.index, skipped: true, reason: 'no_credentials' });
+      }
+      
+    } else if (isSubmitTask) {
+      // Submit task (email, wallet, UID, etc)
+      const result = await completeSubmitTask(page, method.index, method.title, userData);
+      results.push({ taskIndex: method.index, ...result });
       await utils.randomDelay(2000, 4000);
-    } 
-    
-    // Deteksi task Twitter follow
-    else if (titleLower.includes('follow') && titleLower.includes('twitter' || titleLower.includes('x'))) {
-      utils.log(`🐦 Twitter follow task detected (manual action required): ${m.title}`, 'warning');
-      // TODO: Implement OAuth flow
-      await utils.randomDelay(1000, 2000);
-    }
-    
-    // Task lainnya
-    else {
-      utils.log(`⏭️  Skipped (not auto-supported): ${m.title}`, 'warning');
+    } else {
+      // Other action tasks (Discord, YouTube, etc)
+      utils.log(`⏭️ Skip ACTION task: ${method.title} (not supported yet)`, 'warning');
+      results.push({ taskIndex: method.index, skipped: true, reason: 'unsupported_action' });
     }
   }
   
-  utils.log(`📊 Completed ${completedCount} new tasks`, 'success');
-  return completedCount;
+  return results;
 }
 
-async function processAccount(account, idx, total) {
+// Process single account
+async function processAccount(account, accountIndex, totalAccounts) {
   utils.log(`\n${'='.repeat(60)}`, 'info');
-  utils.log(`🧩 Account ${idx + 1}/${total}: ${account.email}`, 'process');
-  utils.log(`${'='.repeat(60)}`, 'info');
+  utils.log(`🤖 Processing Account ${accountIndex + 1}/${totalAccounts}`, 'process');
+  utils.log(`   Name: ${account.name || `Account ${account.id}`}`, 'info');
+  utils.log(`   Email: ${account.email}`, 'info');
+  utils.log(`${'='.repeat(60)}\n`, 'info');
   
-  const browser = await setupBrowser(account.proxy || null);
-  const page = await setupPage(browser);
-
+  let browser;
+  
   try {
-    const ok = await navigateToGleam(page);
-    if (!ok) throw new Error('Failed to load Gleam page');
+    // Setup browser with account's proxy (if provided)
+    const proxyServer = account.proxy || null;
+    browser = await setupBrowser(proxyServer);
     
-    const methods = await analyzeEntryMethods(page);
-    if (methods.length === 0) throw new Error('No tasks found on page');
+    const page = await setupPage(browser);
     
-    const completed = await processAllTasks(page, methods, account);
-    
-    utils.log(`✅ Account ${account.email} finished (${completed} tasks completed)`, 'success');
-    return { success: true, completed };
-    
-  } catch (err) {
-    utils.log(`❌ Error processing ${account.email}: ${err.message}`, 'error');
-    
-    if (config.saveScreenshots) {
-      await utils.takeScreenshot(page, `error-${account.email}-${Date.now()}`);
+    const navigated = await navigateToGleam(page);
+    if (!navigated) {
+      throw new Error('Failed to navigate');
     }
     
-    return { success: false, error: err.message };
-    
-  } finally {
-    if (config.saveScreenshots) {
-      await utils.takeScreenshot(page, `final-${account.email}`);
+    const entryMethods = await analyzeEntryMethods(page);
+    if (entryMethods.length === 0) {
+      throw new Error('No entry methods found');
     }
+    
+    const results = await processAllTasks(page, entryMethods, account);
+    
+    const completed = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success && !r.skipped).length;
+    
+    utils.log(`\n📊 Account ${accountIndex + 1} Summary:`, 'info');
+    utils.log(`   ✅ Completed: ${completed}`, 'success');
+    utils.log(`   ❌ Failed: ${failed}`, failed > 0 ? 'error' : 'info');
+    
+    if (config.saveScreenshots) {
+      await utils.takeScreenshot(page, `account-${account.id}-result`);
+    }
+    
     await browser.close();
+    
+    return {
+      accountId: account.id,
+      accountName: account.name,
+      success: true,
+      completed,
+      failed,
+      results
+    };
+    
+  } catch (error) {
+    utils.log(`❌ Account ${accountIndex + 1} FAILED: ${error.message}`, 'error');
+    
+    if (browser) {
+      try {
+        const page = (await browser.pages())[0];
+        if (page && config.saveScreenshots) {
+          await utils.takeScreenshot(page, `account-${account.id}-error`);
+        }
+      } catch {}
+      await browser.close();
+    }
+    
+    return {
+      accountId: account.id,
+      accountName: account.name,
+      success: false,
+      error: error.message
+    };
   }
 }
 
-// Main execution
-(async () => {
-  console.clear();
-  utils.log(`\n${'='.repeat(60)}`, 'success');
-  utils.log(`🤖 GLEAM BOT STARTED`, 'success');
-  utils.log(`${'='.repeat(60)}\n`, 'success');
+// Main bot function
+async function runBot() {
+  utils.log(`
+╔═══════════════════════════════════════════════════╗
+║      🤖 GLEAM BOT - PHASE 5                       ║
+║      Multi-Account + Twitter OAuth Auto-Follow    ║
+╚═══════════════════════════════════════════════════╝
+  `, 'info');
   
   validateConfig();
   
-  const accounts = utils.loadAccounts();
-  if (accounts.length === 0) {
-    utils.log('❌ No accounts found in accounts.json', 'error');
-    return;
-  }
-
-  utils.log(`📦 Loaded ${accounts.length} account(s)\n`, 'success');
-  
-  const results = [];
-  
-  for (let i = 0; i < accounts.length; i++) {
-    const result = await processAccount(accounts[i], i, accounts.length);
-    results.push({ account: accounts[i].email, ...result });
+  try {
+    // Load accounts from accounts.json
+    const accounts = utils.loadAccounts();
     
-    if (i < accounts.length - 1) {
-      const waitTime = config.accountDelay / 1000;
-      utils.log(`\n⏳ Waiting ${waitTime}s before next account...\n`, 'info');
-      await utils.sleep(config.accountDelay);
+    if (accounts.length === 0) {
+      utils.log('❌ No accounts found in accounts.json!', 'error');
+      process.exit(1);
+    }
+    
+    utils.log(`📋 Loaded ${accounts.length} accounts`, 'success');
+    utils.log(`⏱️ Estimated time: ${Math.ceil(accounts.length * 30 / 60)} minutes\n`, 'info');
+    
+    const startTime = Date.now();
+    const accountResults = [];
+    
+    // Process each account
+    for (let i = 0; i < accounts.length; i++) {
+      const result = await processAccount(accounts[i], i, accounts.length);
+      accountResults.push(result);
+      
+      // Delay between accounts (avoid rate limit)
+      if (i < accounts.length - 1) {
+        utils.log(`\n⏳ Waiting ${config.accountDelay/1000}s before next account...\n`, 'info');
+        await utils.sleep(config.accountDelay);
+      }
+    }
+    
+    // Final summary
+    const endTime = Date.now();
+    const duration = ((endTime - startTime) / 1000 / 60).toFixed(2);
+    
+    const successfulAccounts = accountResults.filter(r => r.success).length;
+    const failedAccounts = accountResults.filter(r => !r.success);
+    
+    const totalCompleted = accountResults
+      .filter(r => r.success)
+      .reduce((sum, r) => sum + (r.completed || 0), 0);
+    
+    utils.log(`\n${'='.repeat(60)}`, 'info');
+    utils.log(`
+╔═══════════════════════════════════════════════════╗
+║              📊 FINAL SUMMARY                     ║
+╚═══════════════════════════════════════════════════╝
+    `, 'info');
+    
+    utils.log(`Total Accounts Processed: ${accounts.length}`, 'info');
+    utils.log(`✅ Successful Accounts: ${successfulAccounts}`, 'success');
+    utils.log(`❌ Failed Accounts: ${failedAccounts.length}`, failedAccounts.length > 0 ? 'error' : 'info');
+    utils.log(`📝 Total Tasks Completed: ${totalCompleted}`, 'success');
+    utils.log(`⏱️ Total Time: ${duration} minutes\n`, 'info');
+    
+    if (failedAccounts.length > 0) {
+      utils.saveFailedAccounts(failedAccounts);
+    }
+    
+    utils.log('✨ All accounts processed!', 'success');
+    
+  } catch (error) {
+    utils.log(`❌ Fatal error: ${error.message}`, 'error');
+    if (config.debug) {
+      console.error(error);
     }
   }
+}
 
-  // Summary
-  utils.log(`\n${'='.repeat(60)}`, 'success');
-  utils.log(`📊 SUMMARY`, 'success');
-  utils.log(`${'='.repeat(60)}`, 'success');
-  
-  const successful = results.filter(r => r.success).length;
-  const failed = results.filter(r => !r.success).length;
-  
-  utils.log(`✅ Successful: ${successful}/${accounts.length}`, 'success');
-  utils.log(`❌ Failed: ${failed}/${accounts.length}`, 'error');
-  
-  // Save failed accounts
-  const failedAccounts = results
-    .filter(r => !r.success)
-    .map(r => ({ email: r.account, error: r.error }));
-  
-  if (failedAccounts.length > 0) {
-    utils.saveFailedAccounts(failedAccounts);
-  }
-  
-  utils.log(`\n🎉 Bot finished!`, 'success');
-})();
+runBot().catch(error => {
+  utils.log(`❌ Unhandled error: ${error.message}`, 'error');
+  process.exit(1);
+});
