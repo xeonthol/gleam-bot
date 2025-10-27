@@ -138,8 +138,9 @@ async function analyzeEntryMethods(page) {
                           method.getAttribute('data-entry-method') || 'unknown';
         const title =
           method.querySelector(
-            '.entry-title, .entry-name, .entry-description, .task-title, .widget-action-title, .entry-text, .action-title, .title, .action-name, .task, span, strong'
-          )?.textContent.trim() || 'No title';
+            '.widget-title, .widget-action-title, .widget-entry-title, .entry-name, .entry-description, .task-title span, .action-content span, .action-content strong'
+        )?.textContent.trim() || 'No title';
+
 
 
         const isCompleted = method.classList.contains('completed') || method.classList.contains('entered');
