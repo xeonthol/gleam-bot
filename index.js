@@ -107,21 +107,29 @@ async function navigateToGleam(page) {
     
     utils.log('✅ Page loaded', 'success');
     
-    // Check for Cloudflare or Gleam captcha
-    await utils.sleep(2000);
-    const captchaSolver = require('./captcha-solver');
-    const captcha = await captchaSolver.detectCaptcha(page);
-    
-    if (captcha.exists) {
-      utils.log('🔐 Captcha detected on Gleam page!', 'warning');
-      const solved = await captchaSolver.handleCaptcha(page);
+    // Optional: Check for captcha (only if captcha-solver exists)
+    try {
+      const captchaSolver = require('./captcha-solver');
+      await utils.sleep(2000);
+      const captcha = await captchaSolver.detectCaptcha(page);
       
-      if (!solved.solved) {
-        throw new Error('Failed to solve Gleam captcha');
+      if (captcha.exists) {
+        utils.log('🔐 Captcha detected on Gleam page!', 'warning');
+        const solved = await captchaSolver.handleCaptcha(page);
+        
+        if (!solved.solved) {
+          utils.log('⚠️ Failed to solve captcha, continuing anyway...', 'warning');
+        } else {
+          utils.log('✅ Gleam captcha solved!', 'success');
+        }
+        
+        await utils.sleep(3000);
       }
-      
-      utils.log('✅ Gleam captcha solved!', 'success');
-      await utils.sleep(3000);
+    } catch (captchaError) {
+      // Captcha solver not available, skip check
+      if (config.debug) {
+        utils.log('⚠️ Captcha solver not available (skipping check)', 'warning');
+      }
     }
     
     const widgetLoaded = await utils.waitForElement(
