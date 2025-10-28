@@ -52,12 +52,10 @@ async function setupBrowser(proxyServer = null) {
   }
   
   const browser = await puppeteer.launch({
-  headless: process.env.HEADLESS === 'true', // ambil dari .env
-  slowMo: process.env.HEADLESS === 'true' ? 0 : 50, // no delay kalau headless
-  defaultViewport: null,
-  userDataDir: './profiles/tmp',
-  args: browserArgs,
+    headless: 'new', // tidak membuka browser (silent mode)
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
 });
+
 
   utils.log('✅ Browser launched', 'success');
   return browser;
