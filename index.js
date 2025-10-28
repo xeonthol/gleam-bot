@@ -52,14 +52,13 @@ async function setupBrowser(proxyServer = null) {
   }
   
   const browser = await puppeteer.launch({
-    headless: false,               // biar browser kelihatan
-    slowMo: 50,                    // tambahkan delay antar aksi biar kamu bisa lihat
-    defaultViewport: null,         // buka dalam ukuran normal
-    userDataDir: './profiles/tmp', // simpan sesi login agar tidak logout
+  headless: process.env.HEADLESS === 'true', // ambil dari .env
+  slowMo: process.env.HEADLESS === 'true' ? 0 : 50, // no delay kalau headless
+  defaultViewport: null,
+  userDataDir: './profiles/tmp',
+  args: browserArgs,
 });
 
-
-  
   utils.log('✅ Browser launched', 'success');
   return browser;
 }
