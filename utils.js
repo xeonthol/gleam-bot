@@ -1,5 +1,20 @@
 // Gleam Bot - Utility Functions
 
+// Gleam Bot - Utility Functions
+
+const fs = require('fs');  // <-- Tambahkan di sini (paling atas)
+
+// Sleep/delay function
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Random delay (between min and max)
+function randomDelay(min = 1000, max = 3000) {
+  const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+  return sleep(delay);
+}
+
 // Sleep/delay function
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
