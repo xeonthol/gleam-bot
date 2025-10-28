@@ -404,7 +404,16 @@ async function processAccount(account, accountIndex, totalAccounts) {
       await utils.takeScreenshot(page, `account-${account.id}-result`);
     }
     
-    await browser.close();
+    console.log('\n🔒 Browser akan tetap terbuka.');
+console.log('➡️  Silakan login ke Twitter secara manual jika belum.');
+console.log('⏸️  Tekan ENTER di terminal setelah selesai login untuk melanjutkan...\n');
+
+await new Promise(resolve => {
+  process.stdin.once('data', () => resolve());
+});
+
+await browser.close();
+
     
     return {
       accountId: account.id,
