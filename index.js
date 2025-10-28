@@ -52,10 +52,10 @@ async function setupBrowser(proxyServer = null) {
   }
   
   const browser = await puppeteer.launch({
-    headless: config.headless,
-    args: browserArgs,
-    defaultViewport: { width: 1366, height: 768 }
-  });
+    headless: false, // biar kelihatan browser-nya
+    userDataDir: './profiles/account1', // folder untuk simpan session login
+});
+
   
   utils.log('✅ Browser launched', 'success');
   return browser;
