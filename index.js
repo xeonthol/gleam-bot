@@ -1,5 +1,5 @@
 // Gleam Bot - Phase 5: Multi-Account + Twitter OAuth + Auto Retweet
-// Supports unlimited accounts with proxy rotation + Auto Twitter Follow + Auto Retweet with Quote
+// FIXED VERSION - Robust Entry Method Detection
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -106,31 +106,7 @@ async function navigateToGleam(page) {
     });
     
     utils.log('✅ Page loaded', 'success');
-    
-    // Optional: Check for captcha (only if captcha-solver exists)
-    try {
-      const captchaSolver = require('./captcha-solver');
-      await utils.sleep(2000);
-      const captcha = await captchaSolver.detectCaptcha(page);
-      
-      if (captcha.exists) {
-        utils.log('🔐 Captcha detected on Gleam page!', 'warning');
-        const solved = await captchaSolver.handleCaptcha(page);
-        
-        if (!solved.solved) {
-          utils.log('⚠️ Failed to solve captcha, continuing anyway...', 'warning');
-        } else {
-          utils.log('✅ Gleam captcha solved!', 'success');
-        }
-        
-        await utils.sleep(3000);
-      }
-    } catch (captchaError) {
-      // Captcha solver not available, skip check
-      if (config.debug) {
-        utils.log('⚠️ Captcha solver not available (skipping check)', 'warning');
-      }
-    }
+    await utils.sleep(3000);
     
     const widgetLoaded = await utils.waitForElement(
       page, 
@@ -157,233 +133,153 @@ async function analyzeEntryMethods(page) {
   utils.log('🔍 Analyzing entry methods...', 'process');
   
   try {
-    // Wait for entry methods to load
+    // Wait for entry methods
     await page.waitForSelector('.entry-method', { timeout: 10000 });
     
-    const entryMethods = await page.$eval('.entry-method', methods => {
-      return methods.map((method, index) => {
-        // Get action type with multiple fallbacks
-        const actionType = method.getAttribute('data-action') || 
-                          method.getAttribute('data-entry-method') ||
-                          method.className.match(/entry-method-(\w+)/)?.[1] ||
-                          'unknown';
-        
-        // Try to get title from multiple possible locations
-        let title = '';
-        
-        // Try specific selectors first
-        const titleSelectors = [
-          '.entry-title',
-          '.entry-name', 
-          '.entry-description',
-          '.entry-content',
-          '.entry-text',
-          'h3',
-          'h4',
-          '.description',
-          '[class*="title"]',
-          '[class*="description"]'
-        ];
-        
-        for (const selector of titleSelectors) {
-          const el = method.querySelector(selector);
-          if (el && el.textContent && el.textContent.trim()) {
-            title = el.textContent.trim();
-            break;
-          }
-        }
-        
-        // If still no title, try data attributes
-        if (!title) {
-          title = method.getAttribute('data-title') || 
-                 method.getAttribute('aria-label') || 
-                 method.getAttribute('title') || '';
-        }
-        
-        // Last resort: get all text content and clean it
-        if (!title) {
-          const allText = method.textContent || '';
-          // Remove extra whitespace and newlines
-          title = allText.replace(/\s+/g, ' ').trim();
-          // Limit length
-          if (title.length > 100) {
-            title = title.substring(0, 100) + '...';
-          }
-        }
-        
-        // Check completion status with multiple indicators
-        const isCompleted = method.classList.contains('completed') || 
-                           method.classList.contains('entered') ||
-                           method.classList.contains('done') ||
-                           method.classList.contains('verified') ||
-                           method.querySelector('.checkmark') !== null ||
-                           method.querySelector('.completed-icon') !== null ||
-                           method.querySelector('[class*="complete"]') !== null ||
-                           method.querySelector('[class*="check"]') !== null;
-        
-        return { 
-          index, 
-          action: actionType, 
-          title: title || 'Unknown Task', 
-          completed: isCompleted,
-          html: method.outerHTML.substring(0, 200) // For debug
-        };
-      });
-    });
+    // Get all entry method elements
+    const entryMethodElements = await page.$$('.entry-method');
     
-    utils.log(`📋 Found ${entryMethods.length} entry methods`, 'info');
+    if (!entryMethodElements || entryMethodElements.length === 0) {
+      throw new Error('No .entry-method elements found');
+    }
     
-    // Debug: Show each task
-    if (config.debug) {
-      entryMethods.forEach((method, idx) => {
-        utils.log(`   📝 Task ${idx + 1}:`, 'info');
-        utils.log(`      Action: ${method.action}`, 'info');
-        utils.log(`      Title: ${method.title}`, 'info');
-        utils.log(`      Completed: ${method.completed ? '✅' : '❌'}`, 'info');
-        if (method.title === 'Unknown Task') {
-          utils.log(`      HTML Preview: ${method.html}`, 'warning');
+    utils.log(`📋 Found ${entryMethodElements.length} entry method elements`, 'info');
+    
+    const entryMethods = [];
+    
+    // Process each element individually
+    for (let index = 0; index < entryMethodElements.length; index++) {
+      const element = entryMethodElements[index];
+      
+      try {
+        // Get action type
+        const actionType = await element.evaluate(el => {
+          return el.getAttribute('data-action') || 
+                 el.getAttribute('data-entry-method') ||
+                 'unknown';
+        }).catch(() => 'unknown');
+        
+        // Get title - try multiple selectors
+        const title = await element.evaluate(el => {
+          const selectors = [
+            '.entry-title',
+            '.entry-name',
+            '.entry-description',
+            'h3', 'h4',
+            '[class*="title"]'
+          ];
+          
+          for (const sel of selectors) {
+            const titleEl = el.querySelector(sel);
+            if (titleEl && titleEl.textContent.trim()) {
+              return titleEl.textContent.trim();
+            }
+          }
+          
+          // Fallback to all text
+          const text = el.textContent.replace(/\s+/g, ' ').trim();
+          return text.substring(0, 100);
+        }).catch(() => 'Unknown Task');
+        
+        // Check if completed
+        const isCompleted = await element.evaluate(el => {
+          return el.classList.contains('completed') || 
+                 el.classList.contains('entered') ||
+                 el.querySelector('.checkmark') !== null;
+        }).catch(() => false);
+        
+        entryMethods.push({
+          index,
+          action: actionType,
+          title: title || `Task ${index + 1}`,
+          completed: isCompleted
+        });
+        
+        if (config.debug) {
+          utils.log(`   📝 Task ${index + 1}: [${actionType}] ${title}`, 'info');
         }
-      });
+        
+      } catch (err) {
+        utils.log(`⚠️ Error reading task ${index + 1}: ${err.message}`, 'warning');
+        entryMethods.push({
+          index,
+          action: 'unknown',
+          title: `Task ${index + 1}`,
+          completed: false
+        });
+      }
     }
     
     return entryMethods;
     
   } catch (error) {
-    utils.log(`❌ Error analyzing: ${error.message}`, 'error');
+    utils.log(`❌ Error analyzing entry methods: ${error.message}`, 'error');
     return [];
   }
 }
 
 async function completeSubmitTask(page, taskIndex, taskType, userData) {
-  utils.log(`📝 Completing task #${taskIndex + 1}: ${taskType}`, 'process');
+  utils.log(`📝 Completing submit task #${taskIndex + 1}: ${taskType}`, 'process');
   
   try {
-    const entryMethodSelector = `.entry-method:nth-of-type(${taskIndex + 1})`;
-    await utils.safeClick(page, entryMethodSelector);
-    await utils.sleep(1000);
+    const entrySelector = `.entry-method:nth-of-type(${taskIndex + 1})`;
+    await utils.safeClick(page, entrySelector);
+    await utils.sleep(2000);
     
+    // Find input field
     const inputSelectors = [
       'input[type="text"]',
       'input[type="email"]',
       'input[type="url"]',
-      'input[name*="email"]',
-      'input[name*="wallet"]',
-      'input[name*="address"]',
-      'input[name*="link"]',
-      'input[placeholder*="Enter"]',
-      'input[placeholder*="link"]',
-      'input[placeholder*="URL"]',
-      '.form-control',
-      '.input-field',
       'textarea'
     ];
     
-    let inputFound = false;
-    let inputSelector = null;
-    
-    for (const selector of inputSelectors) {
-      const exists = await utils.elementExists(page, selector);
-      if (exists) {
-        inputSelector = selector;
-        inputFound = true;
-        break;
-      }
+    let inputField = null;
+    for (const sel of inputSelectors) {
+      inputField = await page.$(sel);
+      if (inputField) break;
     }
     
-    if (!inputFound) {
-      utils.log(`⚠️ No input field found`, 'warning');
-      return { success: false, reason: 'no_input_field' };
+    if (!inputField) {
+      throw new Error('No input field found');
     }
     
+    // Determine what data to submit
     let submitData = '';
+    const lowerTitle = taskType.toLowerCase();
     
-    if (taskType.includes('email') || taskType.includes('Email')) {
+    if (lowerTitle.includes('email')) {
       submitData = userData.email;
-    } else if (taskType.includes('wallet') || taskType.includes('address')) {
+    } else if (lowerTitle.includes('wallet') || lowerTitle.includes('address')) {
       submitData = userData.wallet;
-    } else if (taskType.includes('telegram') || taskType.includes('Telegram')) {
-      submitData = userData.telegram?.username || '@username';
-    } else if (taskType.includes('twitter') || taskType.includes('Twitter') && !taskType.includes('link') && !taskType.includes('repost')) {
-      submitData = userData.twitter?.username || '@username';
-    } else if (taskType.includes('kucoin') || taskType.includes('KuCoin') || taskType.includes('UID') || taskType.includes('uid')) {
-      submitData = userData.kucoin_uid || '123456789';
-      utils.log(`🪙 Submitting KuCoin UID: ${submitData}`, 'info');
-    } else if (taskType.includes('repost') || taskType.includes('link') || taskType.includes('tweet link') || taskType.includes('post link') || taskType.includes('quote')) {
-      // This will be filled by retweet task if it's auto-generated
-      submitData = userData.repost_link || userData.quote_tweet_link || 'https://twitter.com/status/123';
-      utils.log(`🔗 Submitting link: ${submitData}`, 'info');
+    } else if (lowerTitle.includes('kucoin') || lowerTitle.includes('uid')) {
+      submitData = userData.kucoin_uid;
+    } else if (lowerTitle.includes('tweet') || lowerTitle.includes('link') || lowerTitle.includes('repost')) {
+      submitData = userData.quote_tweet_link || userData.repost_link || 'https://twitter.com/status/123';
     } else {
       submitData = userData.email;
     }
     
-    await utils.safeType(page, inputSelector, submitData, { clear: true, delay: 100 });
-    await utils.sleep(500);
+    utils.log(`📤 Submitting: ${submitData}`, 'info');
     
-    const submitButtonSelectors = [
-      'button[type="submit"]',
-      'input[type="submit"]',
-      '.submit-button',
-      '.btn-primary',
-      'button.continue-btn',
-      'button.action-button'
-    ];
+    await inputField.type(submitData, { delay: 100 });
+    await utils.sleep(1000);
     
-    let submitClicked = false;
-    
-    // Try standard selectors first
-    for (const selector of submitButtonSelectors) {
-      try {
-        const buttonExists = await page.$(selector);
-        if (buttonExists) {
-          await page.click(selector);
-          submitClicked = true;
-          break;
-        }
-      } catch (error) {
-        continue;
-      }
-    }
-    
-    // Fallback: Find button by text content
-    if (!submitClicked) {
-      try {
-        const buttons = await page.$('button');
-        for (const button of buttons) {
-          const text = await page.evaluate(el => el.textContent.toLowerCase(), button);
-          if (text.includes('submit') || text.includes('continue') || text.includes('verify')) {
-            await button.click();
-            submitClicked = true;
-            utils.log('✅ Submit button clicked (by text search)', 'success');
-            break;
-          }
-        }
-      } catch (e) {
-        // Continue to keyboard fallback
-      }
-    }
-    
-    // Last resort: Press Enter
-    if (!submitClicked) {
+    // Submit
+    const submitBtn = await page.$('button[type="submit"]');
+    if (submitBtn) {
+      await submitBtn.click();
+    } else {
       await page.keyboard.press('Enter');
     }
     
-    await utils.sleep(2000);
+    await utils.sleep(3000);
     
-    const taskCompleted = await page.$eval(
-      entryMethodSelector,
-      el => el.classList.contains('completed') || el.classList.contains('entered')
-    ).catch(() => false);
-    
-    if (taskCompleted) {
-      utils.log(`✅ Task #${taskIndex + 1} completed!`, 'success');
-      return { success: true, data: submitData };
-    } else {
-      utils.log(`⚠️ Task #${taskIndex + 1} status uncertain`, 'warning');
-      return { success: true, data: submitData, uncertain: true };
-    }
+    utils.log(`✅ Submit task completed`, 'success');
+    return { success: true, data: submitData };
     
   } catch (error) {
-    utils.log(`❌ Error task #${taskIndex + 1}: ${error.message}`, 'error');
+    utils.log(`❌ Submit task error: ${error.message}`, 'error');
     return { success: false, error: error.message };
   }
 }
@@ -393,7 +289,7 @@ async function processAllTasks(page, entryMethods, userData) {
   
   for (const method of entryMethods) {
     if (method.completed) {
-      utils.log(`⏭️ Skip task #${method.index + 1} - already done`, 'info');
+      utils.log(`⏭️ Skip task #${method.index + 1} - already completed`, 'info');
       results.push({ taskIndex: method.index, skipped: true, reason: 'already_completed' });
       continue;
     }
@@ -401,114 +297,88 @@ async function processAllTasks(page, entryMethods, userData) {
     const titleLower = method.title.toLowerCase();
     const actionLower = method.action.toLowerCase();
     
-    // 🐦 Check if it's a Twitter Follow task
-    const isTwitterFollowTask = 
-      actionLower === 'twitter_follow' ||
-      actionLower.includes('follow') && titleLower.includes('twitter') ||
-      titleLower.includes('follow') && (titleLower.includes('@') || titleLower.includes('twitter'));
+    // Detect task type
+    const isFollowTask = 
+      actionLower.includes('follow') || 
+      titleLower.includes('follow');
     
-    // 🔄 Check if it's a Twitter Retweet/Quote task
-    const isTwitterRetweetTask = 
-      actionLower === 'twitter_retweet' ||
-      actionLower.includes('retweet') ||
+    const isRetweetTask = 
+      actionLower.includes('retweet') || 
       actionLower.includes('repost') ||
       titleLower.includes('retweet') ||
-      titleLower.includes('repost') ||
-      titleLower.includes('quote tweet') ||
-      titleLower.includes('rt ') ||
-      (titleLower.includes('twitter') && titleLower.includes('share'));
+      titleLower.includes('repost');
     
-    // 📝 Check if it's a Submit task (email, wallet, UID, link, etc)
     const isSubmitTask = 
-      actionLower.includes('email') ||
-      actionLower.includes('wallet') ||
-      actionLower.includes('address') ||
       titleLower.includes('submit') ||
       titleLower.includes('enter your') ||
-      titleLower.includes('your email') ||
-      titleLower.includes('your wallet') ||
-      titleLower.includes('kucoin uid') ||
-      titleLower.includes('tweet link') ||
-      titleLower.includes('post link');
+      titleLower.includes('email') ||
+      titleLower.includes('wallet') ||
+      titleLower.includes('link');
     
-    // Process tasks based on type
-    if (isTwitterFollowTask) {
-      // ✅ Twitter Follow with OAuth
-      utils.log(`🐦 Detected TWITTER FOLLOW task: ${method.title}`, 'info');
+    if (isFollowTask && !isSubmitTask) {
+      utils.log(`🐦 Twitter Follow: ${method.title}`, 'process');
       
       if (userData.twitter && userData.twitter.password) {
         const result = await twitterOAuth.completeTwitterFollowTask(
-          page, 
-          method.index, 
-          userData.twitter
+          page, method.index, userData.twitter
         );
         results.push({ taskIndex: method.index, ...result });
-        await utils.randomDelay(3000, 5000);
       } else {
-        utils.log(`⚠️ No Twitter credentials - skipping`, 'warning');
-        results.push({ taskIndex: method.index, skipped: true, reason: 'no_credentials' });
+        utils.log('⚠️ No Twitter credentials', 'warning');
+        results.push({ taskIndex: method.index, skipped: true });
       }
       
-    } else if (isTwitterRetweetTask) {
-      // ✅ NEW: Twitter Retweet with Quote + Auto Submit Link
-      utils.log(`🔄 Detected TWITTER RETWEET task: ${method.title}`, 'info');
+    } else if (isRetweetTask && !isSubmitTask) {
+      utils.log(`🔄 Twitter Retweet: ${method.title}`, 'process');
       
-      if (userData.twitter && userData.twitter.password && userData.retweet_config) {
+      if (userData.twitter && userData.retweet_config) {
         const result = await twitterActions.completeTwitterRetweetTask(
-          page,
-          method.index,
-          userData.twitter,
-          userData.retweet_config
+          page, method.index, userData.twitter, userData.retweet_config
         );
         
-        // Store the quote tweet link for later submit tasks
         if (result.success && result.quoteTweetUrl) {
           userData.quote_tweet_link = result.quoteTweetUrl;
-          utils.log(`💾 Saved quote tweet link: ${result.quoteTweetUrl}`, 'success');
         }
         
         results.push({ taskIndex: method.index, ...result });
-        await utils.randomDelay(3000, 6000);
       } else {
-        utils.log(`⚠️ Missing Twitter credentials or retweet_config - skipping`, 'warning');
-        results.push({ taskIndex: method.index, skipped: true, reason: 'no_credentials' });
+        utils.log('⚠️ No Twitter/retweet config', 'warning');
+        results.push({ taskIndex: method.index, skipped: true });
       }
       
     } else if (isSubmitTask) {
-      // ✅ Submit task (email, wallet, UID, link, etc)
+      utils.log(`📝 Submit Task: ${method.title}`, 'process');
+      
       const result = await completeSubmitTask(page, method.index, method.title, userData);
       results.push({ taskIndex: method.index, ...result });
-      await utils.randomDelay(2000, 4000);
       
     } else {
-      // ⏭️ Other action tasks (Discord, YouTube, etc)
-      utils.log(`⏭️ Skip ACTION task: ${method.title} (not supported yet)`, 'warning');
-      results.push({ taskIndex: method.index, skipped: true, reason: 'unsupported_action' });
+      utils.log(`⏭️ Skip: ${method.title} (unsupported)`, 'warning');
+      results.push({ taskIndex: method.index, skipped: true });
     }
+    
+    await utils.randomDelay(2000, 4000);
   }
   
   return results;
 }
 
-// Process single account
 async function processAccount(account, accountIndex, totalAccounts) {
   utils.log(`\n${'='.repeat(60)}`, 'info');
   utils.log(`🤖 Processing Account ${accountIndex + 1}/${totalAccounts}`, 'process');
   utils.log(`   Name: ${account.name || `Account ${account.id}`}`, 'info');
-  utils.log(`   Email: ${account.email}`, 'info');
+  utils.log(`   Email: ${account.email || 'N/A'}`, 'info');
   utils.log(`${'='.repeat(60)}\n`, 'info');
   
   let browser;
   
   try {
-    const proxyServer = account.proxy || null;
-    browser = await setupBrowser(proxyServer);
-    
+    browser = await setupBrowser(account.proxy);
     const page = await setupPage(browser);
     
     const navigated = await navigateToGleam(page);
     if (!navigated) {
-      throw new Error('Failed to navigate');
+      throw new Error('Failed to navigate to Gleam');
     }
     
     const entryMethods = await analyzeEntryMethods(page);
@@ -524,7 +394,7 @@ async function processAccount(account, accountIndex, totalAccounts) {
     
     utils.log(`\n📊 Account ${accountIndex + 1} Summary:`, 'info');
     utils.log(`   ✅ Completed: ${completed}`, 'success');
-    utils.log(`   ❌ Failed: ${failed}`, failed > 0 ? 'error' : 'info');
+    utils.log(`   ❌ Failed: ${failed}`, 'info');
     utils.log(`   ⏭️ Skipped: ${skipped}`, 'info');
     
     if (config.saveScreenshots) {
@@ -535,12 +405,10 @@ async function processAccount(account, accountIndex, totalAccounts) {
     
     return {
       accountId: account.id,
-      accountName: account.name,
       success: true,
       completed,
       failed,
-      skipped,
-      results
+      skipped
     };
     
   } catch (error) {
@@ -558,20 +426,17 @@ async function processAccount(account, accountIndex, totalAccounts) {
     
     return {
       accountId: account.id,
-      accountName: account.name,
       success: false,
       error: error.message
     };
   }
 }
 
-// Main bot function
 async function runBot() {
   utils.log(`
 ╔═══════════════════════════════════════════════════╗
 ║      🤖 GLEAM BOT - PHASE 5 ULTIMATE              ║
 ║      Multi-Account + Twitter Auto-Everything      ║
-║      ✅ Follow  ✅ Retweet  ✅ Quote  ✅ Submit    ║
 ╚═══════════════════════════════════════════════════╝
   `, 'info');
   
@@ -585,68 +450,40 @@ async function runBot() {
       process.exit(1);
     }
     
-    // Apply account filtering based on ACCOUNT_START and ACCOUNT_LIMIT
     const startIndex = config.accountStart - 1;
     const endIndex = Math.min(startIndex + config.accountLimit, allAccounts.length);
     const accounts = allAccounts.slice(startIndex, endIndex);
     
-    utils.log(`📋 Total accounts in file: ${allAccounts.length}`, 'info');
-    utils.log(`🎯 Processing accounts: ${config.accountStart} to ${endIndex}`, 'success');
-    utils.log(`⏱️ Estimated time: ${Math.ceil(accounts.length * 30 / 60)} minutes\n`, 'info');
+    utils.log(`📋 Processing accounts: ${config.accountStart} to ${endIndex}`, 'success');
     
     const startTime = Date.now();
-    const accountResults = [];
+    const results = [];
     
     for (let i = 0; i < accounts.length; i++) {
       const result = await processAccount(accounts[i], i, accounts.length);
-      accountResults.push(result);
+      results.push(result);
       
       if (i < accounts.length - 1) {
-        utils.log(`\n⏳ Waiting ${config.accountDelay/1000}s before next account...\n`, 'info');
+        utils.log(`\n⏳ Waiting ${config.accountDelay/1000}s...\n`, 'info');
         await utils.sleep(config.accountDelay);
       }
     }
     
-    // Final summary
-    const endTime = Date.now();
-    const duration = ((endTime - startTime) / 1000 / 60).toFixed(2);
-    
-    const successfulAccounts = accountResults.filter(r => r.success).length;
-    const failedAccounts = accountResults.filter(r => !r.success);
-    
-    const totalCompleted = accountResults
-      .filter(r => r.success)
-      .reduce((sum, r) => sum + (r.completed || 0), 0);
-    
-    const totalSkipped = accountResults
-      .filter(r => r.success)
-      .reduce((sum, r) => sum + (r.skipped || 0), 0);
+    const duration = ((Date.now() - startTime) / 60000).toFixed(2);
+    const successful = results.filter(r => r.success).length;
+    const totalCompleted = results.reduce((sum, r) => sum + (r.completed || 0), 0);
     
     utils.log(`\n${'='.repeat(60)}`, 'info');
-    utils.log(`
-╔═══════════════════════════════════════════════════╗
-║              📊 FINAL SUMMARY                     ║
-╚═══════════════════════════════════════════════════╝
-    `, 'info');
+    utils.log(`📊 FINAL SUMMARY`, 'info');
+    utils.log(`   Accounts: ${accounts.length}`, 'info');
+    utils.log(`   ✅ Successful: ${successful}`, 'success');
+    utils.log(`   📝 Tasks Completed: ${totalCompleted}`, 'success');
+    utils.log(`   ⏱️ Time: ${duration} minutes`, 'info');
     
-    utils.log(`Total Accounts Processed: ${accounts.length}`, 'info');
-    utils.log(`✅ Successful Accounts: ${successfulAccounts}`, 'success');
-    utils.log(`❌ Failed Accounts: ${failedAccounts.length}`, failedAccounts.length > 0 ? 'error' : 'info');
-    utils.log(`📝 Total Tasks Completed: ${totalCompleted}`, 'success');
-    utils.log(`⏭️ Total Tasks Skipped: ${totalSkipped}`, 'info');
-    utils.log(`⏱️ Total Time: ${duration} minutes\n`, 'info');
-    
-    if (failedAccounts.length > 0) {
-      utils.saveFailedAccounts(failedAccounts);
-    }
-    
-    utils.log('✨ All accounts processed!', 'success');
+    utils.log('\n✨ All done!', 'success');
     
   } catch (error) {
     utils.log(`❌ Fatal error: ${error.message}`, 'error');
-    if (config.debug) {
-      console.error(error);
-    }
   }
 }
 
