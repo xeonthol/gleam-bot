@@ -1,5 +1,5 @@
-// Gleam Bot - Phase 5: Multi-Account + Twitter OAuth + Auto Retweet
-// Supports unlimited accounts with proxy rotation + Auto Twitter Follow + Auto Retweet with Quote
+// Gleam Bot - Phase 5: Multi-Account + Twitter OAuth
+// Supports unlimited accounts with proxy rotation + Auto Twitter Follow
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -18,8 +18,6 @@ const config = {
   maxRetries: parseInt(process.env.MAX_RETRIES) || 3,
   pageTimeout: parseInt(process.env.PAGE_TIMEOUT) || 30000,
   accountDelay: parseInt(process.env.ACCOUNT_DELAY) || 5000,
-  accountStart: parseInt(process.env.ACCOUNT_START) || 1,
-  accountLimit: parseInt(process.env.ACCOUNT_LIMIT) || 999,
   stealthMode: process.env.STEALTH_MODE === 'true',
   saveScreenshots: process.env.SAVE_SCREENSHOTS === 'true',
   debug: process.env.DEBUG === 'true'
@@ -46,6 +44,7 @@ async function setupBrowser(proxyServer = null) {
     '--disable-gpu'
   ];
   
+  // Add proxy if provided
   if (proxyServer) {
     browserArgs.push(`--proxy-server=${proxyServer}`);
     utils.log(`🔒 Using proxy: ${proxyServer}`, 'info');
@@ -136,13 +135,7 @@ async function analyzeEntryMethods(page) {
       return methods.map((method, index) => {
         const actionType = method.getAttribute('data-action') || 
                           method.getAttribute('data-entry-method') || 'unknown';
-        const title =
-          method.querySelector(
-            '.widget-title, .widget-action-title, .widget-entry-title, .entry-name, .entry-description, .task-title span, .action-content span, .action-content strong'
-        )?.textContent.trim() || 'No title';
-
-
-
+        const title = method.querySelector('.entry-title, .entry-name, .entry-description')?.textContent.trim() || 'No title';
         const isCompleted = method.classList.contains('completed') || method.classList.contains('entered');
         
         return { index, action: actionType, title, completed: isCompleted };
@@ -169,17 +162,12 @@ async function completeSubmitTask(page, taskIndex, taskType, userData) {
     const inputSelectors = [
       'input[type="text"]',
       'input[type="email"]',
-      'input[type="url"]',
       'input[name*="email"]',
       'input[name*="wallet"]',
       'input[name*="address"]',
-      'input[name*="link"]',
       'input[placeholder*="Enter"]',
-      'input[placeholder*="link"]',
-      'input[placeholder*="URL"]',
       '.form-control',
-      '.input-field',
-      'textarea'
+      '.input-field'
     ];
     
     let inputFound = false;
@@ -210,12 +198,13 @@ async function completeSubmitTask(page, taskIndex, taskType, userData) {
     } else if (taskType.includes('twitter') || taskType.includes('Twitter') && !taskType.includes('link') && !taskType.includes('repost')) {
       submitData = userData.twitter?.username || '@username';
     } else if (taskType.includes('kucoin') || taskType.includes('KuCoin') || taskType.includes('UID') || taskType.includes('uid')) {
+      // ✅ Support KuCoin UID
       submitData = userData.kucoin_uid || '123456789';
       utils.log(`🪙 Submitting KuCoin UID: ${submitData}`, 'info');
-    } else if (taskType.includes('repost') || taskType.includes('link') || taskType.includes('tweet link') || taskType.includes('post link') || taskType.includes('quote')) {
-      // This will be filled by retweet task if it's auto-generated
-      submitData = userData.repost_link || userData.quote_tweet_link || 'https://twitter.com/status/123';
-      utils.log(`🔗 Submitting link: ${submitData}`, 'info');
+    } else if (taskType.includes('repost') || taskType.includes('link') || taskType.includes('tweet link') || taskType.includes('post link')) {
+      // ✅ Support Repost Link
+      submitData = userData.repost_link || 'https://twitter.com/status/123';
+      utils.log(`🔗 Submitting repost link: ${submitData}`, 'info');
     } else {
       submitData = userData.email;
     }
@@ -281,42 +270,48 @@ async function processAllTasks(page, entryMethods, userData) {
       continue;
     }
     
-    const titleLower = method.title.toLowerCase();
-    const actionLower = method.action.toLowerCase();
-    
-    // 🐦 Check if it's a Twitter Follow task
-    const isTwitterFollowTask = 
-      actionLower === 'twitter_follow' ||
-      actionLower.includes('follow') && titleLower.includes('twitter') ||
-      titleLower.includes('follow') && (titleLower.includes('@') || titleLower.includes('twitter'));
-    
-    // 🔄 Check if it's a Twitter Retweet/Quote task
-    const isTwitterRetweetTask = 
-      actionLower === 'twitter_retweet' ||
-      actionLower.includes('retweet') ||
-      actionLower.includes('repost') ||
-      titleLower.includes('retweet') ||
-      titleLower.includes('repost') ||
-      titleLower.includes('quote tweet') ||
-      titleLower.includes('rt ') ||
-      (titleLower.includes('twitter') && titleLower.includes('share'));
-    
-    // 📝 Check if it's a Submit task (email, wallet, UID, link, etc)
+    // Check if it's a Submit task
     const isSubmitTask = 
-      actionLower.includes('email') ||
-      actionLower.includes('wallet') ||
-      actionLower.includes('address') ||
-      titleLower.includes('submit') ||
-      titleLower.includes('enter your') ||
-      titleLower.includes('your email') ||
-      titleLower.includes('your wallet') ||
-      titleLower.includes('kucoin uid') ||
-      titleLower.includes('tweet link') ||
-      titleLower.includes('post link');
+      method.action.includes('email') ||
+      method.action.includes('wallet') ||
+      method.action.includes('address') ||
+      method.title.toLowerCase().includes('submit') && !method.title.toLowerCase().includes('repost') ||
+      method.title.toLowerCase().includes('enter your');
     
-    // Process tasks based on type
-    if (isTwitterFollowTask) {
-      // ✅ Twitter Follow with OAuth
+    // Check if it's a Twitter Follow task
+    const isTwitterFollowTask = 
+      method.action === 'twitter_follow' ||
+      method.action.includes('follow') && method.title.toLowerCase().includes('twitter') ||
+      method.title.toLowerCase().includes('follow') && (method.title.toLowerCase().includes('@') || method.title.toLowerCase().includes('twitter'));
+    
+    // Check if it's a Twitter Retweet/Quote task
+    const isTwitterRetweetTask =
+      method.action === 'twitter_retweet' ||
+      method.action.includes('retweet') ||
+      method.title.toLowerCase().includes('retweet') ||
+      method.title.toLowerCase().includes('repost') ||
+      method.title.toLowerCase().includes('quote');
+    
+    if (isTwitterRetweetTask) {
+      // ✅ NEW: Twitter Retweet with Quote + Auto Submit Link
+      utils.log(`🔄 Detected TWITTER RETWEET task: ${method.title}`, 'info');
+      
+      if (userData.twitter && userData.twitter.password && userData.retweet_config) {
+        const result = await twitterActions.completeTwitterRetweetTask(
+          page,
+          method.index,
+          userData.twitter,
+          userData.retweet_config
+        );
+        results.push({ taskIndex: method.index, ...result });
+        await utils.randomDelay(3000, 5000);
+      } else {
+        utils.log(`⚠️ Missing Twitter credentials or retweet config - skipping`, 'warning');
+        results.push({ taskIndex: method.index, skipped: true, reason: 'no_retweet_config' });
+      }
+      
+    } else if (isTwitterFollowTask) {
+      // Twitter Follow with OAuth
       utils.log(`🐦 Detected TWITTER FOLLOW task: ${method.title}`, 'info');
       
       if (userData.twitter && userData.twitter.password) {
@@ -332,39 +327,13 @@ async function processAllTasks(page, entryMethods, userData) {
         results.push({ taskIndex: method.index, skipped: true, reason: 'no_credentials' });
       }
       
-    } else if (isTwitterRetweetTask) {
-      // ✅ NEW: Twitter Retweet with Quote + Auto Submit Link
-      utils.log(`🔄 Detected TWITTER RETWEET task: ${method.title}`, 'info');
-      
-      if (userData.twitter && userData.twitter.password && userData.retweet_config) {
-        const result = await twitterActions.completeTwitterRetweetTask(
-          page,
-          method.index,
-          userData.twitter,
-          userData.retweet_config
-        );
-        
-        // Store the quote tweet link for later submit tasks
-        if (result.success && result.quoteTweetUrl) {
-          userData.quote_tweet_link = result.quoteTweetUrl;
-          utils.log(`💾 Saved quote tweet link: ${result.quoteTweetUrl}`, 'success');
-        }
-        
-        results.push({ taskIndex: method.index, ...result });
-        await utils.randomDelay(3000, 6000);
-      } else {
-        utils.log(`⚠️ Missing Twitter credentials or retweet_config - skipping`, 'warning');
-        results.push({ taskIndex: method.index, skipped: true, reason: 'no_credentials' });
-      }
-      
     } else if (isSubmitTask) {
-      // ✅ Submit task (email, wallet, UID, link, etc)
+      // Submit task (email, wallet, UID, etc)
       const result = await completeSubmitTask(page, method.index, method.title, userData);
       results.push({ taskIndex: method.index, ...result });
       await utils.randomDelay(2000, 4000);
-      
     } else {
-      // ⏭️ Other action tasks (Discord, YouTube, etc)
+      // Other action tasks (Discord, YouTube, etc)
       utils.log(`⏭️ Skip ACTION task: ${method.title} (not supported yet)`, 'warning');
       results.push({ taskIndex: method.index, skipped: true, reason: 'unsupported_action' });
     }
@@ -384,6 +353,7 @@ async function processAccount(account, accountIndex, totalAccounts) {
   let browser;
   
   try {
+    // Setup browser with account's proxy (if provided)
     const proxyServer = account.proxy || null;
     browser = await setupBrowser(proxyServer);
     
@@ -403,12 +373,10 @@ async function processAccount(account, accountIndex, totalAccounts) {
     
     const completed = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success && !r.skipped).length;
-    const skipped = results.filter(r => r.skipped).length;
     
     utils.log(`\n📊 Account ${accountIndex + 1} Summary:`, 'info');
     utils.log(`   ✅ Completed: ${completed}`, 'success');
     utils.log(`   ❌ Failed: ${failed}`, failed > 0 ? 'error' : 'info');
-    utils.log(`   ⏭️ Skipped: ${skipped}`, 'info');
     
     if (config.saveScreenshots) {
       await utils.takeScreenshot(page, `account-${account.id}-result`);
@@ -422,7 +390,6 @@ async function processAccount(account, accountIndex, totalAccounts) {
       success: true,
       completed,
       failed,
-      skipped,
       results
     };
     
@@ -452,38 +419,34 @@ async function processAccount(account, accountIndex, totalAccounts) {
 async function runBot() {
   utils.log(`
 ╔═══════════════════════════════════════════════════╗
-║      🤖 GLEAM BOT - PHASE 5 ULTIMATE              ║
-║      Multi-Account + Twitter Auto-Everything      ║
-║      ✅ Follow  ✅ Retweet  ✅ Quote  ✅ Submit    ║
+║      🤖 GLEAM BOT - FULL AUTO                     ║
+║      Follow + Retweet + Submit (All-in-One!)      ║
 ╚═══════════════════════════════════════════════════╝
   `, 'info');
   
   validateConfig();
   
   try {
-    const allAccounts = utils.loadAccounts();
+    // Load accounts from accounts.json
+    const accounts = utils.loadAccounts();
     
-    if (allAccounts.length === 0) {
+    if (accounts.length === 0) {
       utils.log('❌ No accounts found in accounts.json!', 'error');
       process.exit(1);
     }
     
-    // Apply account filtering based on ACCOUNT_START and ACCOUNT_LIMIT
-    const startIndex = config.accountStart - 1;
-    const endIndex = Math.min(startIndex + config.accountLimit, allAccounts.length);
-    const accounts = allAccounts.slice(startIndex, endIndex);
-    
-    utils.log(`📋 Total accounts in file: ${allAccounts.length}`, 'info');
-    utils.log(`🎯 Processing accounts: ${config.accountStart} to ${endIndex}`, 'success');
+    utils.log(`📋 Loaded ${accounts.length} accounts`, 'success');
     utils.log(`⏱️ Estimated time: ${Math.ceil(accounts.length * 30 / 60)} minutes\n`, 'info');
     
     const startTime = Date.now();
     const accountResults = [];
     
+    // Process each account
     for (let i = 0; i < accounts.length; i++) {
       const result = await processAccount(accounts[i], i, accounts.length);
       accountResults.push(result);
       
+      // Delay between accounts (avoid rate limit)
       if (i < accounts.length - 1) {
         utils.log(`\n⏳ Waiting ${config.accountDelay/1000}s before next account...\n`, 'info');
         await utils.sleep(config.accountDelay);
@@ -501,10 +464,6 @@ async function runBot() {
       .filter(r => r.success)
       .reduce((sum, r) => sum + (r.completed || 0), 0);
     
-    const totalSkipped = accountResults
-      .filter(r => r.success)
-      .reduce((sum, r) => sum + (r.skipped || 0), 0);
-    
     utils.log(`\n${'='.repeat(60)}`, 'info');
     utils.log(`
 ╔═══════════════════════════════════════════════════╗
@@ -516,7 +475,6 @@ async function runBot() {
     utils.log(`✅ Successful Accounts: ${successfulAccounts}`, 'success');
     utils.log(`❌ Failed Accounts: ${failedAccounts.length}`, failedAccounts.length > 0 ? 'error' : 'info');
     utils.log(`📝 Total Tasks Completed: ${totalCompleted}`, 'success');
-    utils.log(`⏭️ Total Tasks Skipped: ${totalSkipped}`, 'info');
     utils.log(`⏱️ Total Time: ${duration} minutes\n`, 'info');
     
     if (failedAccounts.length > 0) {
