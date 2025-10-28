@@ -110,27 +110,44 @@ async function navigateToGleam(page) {
     
     utils.log('✅ Page loaded', 'success');
     await utils.sleep(3000);
-    
+
+    // 🧩 Tambahan: Deteksi dan switch ke iframe jika Gleam widget disematkan di dalamnya
+    const frames = page.frames();
+    let gleamFrame = null;
+    for (const frame of frames) {
+      const frameUrl = frame.url();
+      if (frameUrl.includes("gleam.io") || frameUrl.includes("embed")) {
+        gleamFrame = frame;
+        utils.log(`🪞 Gleam iframe detected: ${frameUrl}`, 'info');
+        break;
+      }
+    }
+
+    // Pilih target page yang aktif (utama atau iframe)
+    const target = gleamFrame || page;
+
+    // Tunggu widget benar-benar dimuat
     const widgetLoaded = await utils.waitForElement(
-      page, 
+      target,
       '.entry-method, .gleam-widget, [class*="gleam"]',
       config.pageTimeout,
       3
     );
-    
+
     if (widgetLoaded) {
-      utils.log('✅ Gleam widget loaded', 'success');
+      utils.log('✅ Gleam widget loaded (iframe-safe)', 'success');
       return true;
     } else {
-      utils.log('❌ Gleam widget not found', 'error');
+      utils.log('❌ Gleam widget not found, even after iframe scan', 'error');
       return false;
     }
-    
+
   } catch (error) {
     utils.log(`❌ Navigation error: ${error.message}`, 'error');
     return false;
   }
 }
+
 
 async function analyzeEntryMethods(page) {
   utils.log('🔍 Analyzing entry methods...', 'process');
