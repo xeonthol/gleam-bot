@@ -3,7 +3,7 @@
     "username": "account1",
     "email": "account1@email.com", 
     "password": "password1",
-    "xCookie": "auth_token=xxx; ct0=yyy", // ← TAMBAH INI
+    "xCookie": "auth_token=xxx; ct0=yyy",
     "index": 0
     "retweet_config": {
       "quoteText": "Trade $LIGHT on #KuCoin! 🚀",
