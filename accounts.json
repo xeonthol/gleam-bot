@@ -1,14 +1,16 @@
 [
   {
     "username": "account1",
-    "email": "account1@email.com", 
+    "email": "account1@email.com",
     "password": "password1",
-    "xCookie": "auth_token=xxx; ct0=yyy",
+    "xCookie": "auth_token=YOUR_AUTH_TOKEN; ct0=YOUR_CT0_TOKEN",
     "index": 0
-    "retweet_config": {
-      "quoteText": "Trade $LIGHT on #KuCoin! 🚀",
-      "taggedFriends": ["friend1", "friend2", "friend3"]
-    },
-    "proxy": ""
+  },
+  {
+    "username": "account2", 
+    "email": "account2@email.com",
+    "password": "password2",
+    "xCookie": "auth_token=ANOTHER_AUTH_TOKEN; ct0=ANOTHER_CT0_TOKEN",
+    "index": 1
   }
 ]
