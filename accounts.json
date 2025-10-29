@@ -5,7 +5,6 @@
     "password": "password1",
     "xCookie": "auth_token=xxx; ct0=yyy", // ← TAMBAH INI
     "index": 0
-  }
     "retweet_config": {
       "quoteText": "Trade $LIGHT on #KuCoin! 🚀",
       "taggedFriends": ["friend1", "friend2", "friend3"]
