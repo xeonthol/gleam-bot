@@ -351,3 +351,5 @@ export class XActions {
     }
   }
 }
+
+     module.exports = { XActions };
