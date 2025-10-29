@@ -278,3 +278,20 @@ export async function ensureXSession({ xCookie, ua } = {}) {
   await xa.verifySession();
   return xa;
 }
+
+// Copy FULL content dari x-auth.mjs teman Anda
+// dan konversi ke CommonJS:
+
+const fs = require('fs');
+const crypto = require('crypto');
+const axios = require('axios');
+const http = require('http');
+const https = require('https');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+const { SocksProxyAgent } = require('socks-proxy-agent');
+
+// ... (paste semua code dari x-auth.mjs di sini)
+// Ganti semua 'export' dengan 'module.exports'
+
+// Di akhir file:
+module.exports = { XAuth, ensureXSession };
